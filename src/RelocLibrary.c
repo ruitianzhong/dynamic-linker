@@ -73,4 +73,38 @@ void *symbolLookup(LinkMap *dep, const char *name)
 void RelocLibrary(LinkMap *lib, int mode)
 {
     /* Your code here */
+  
+    Elf64_Dyn **dyn = lib->dynInfo;
+    // if(strcmp(lib->name,"./test_lib/lib1.so")!=0){
+    //     return;
+    // }
+
+    uint64_t jmp_rel_addr = 0, jmp_rel_size = 0;
+    if (dyn[DT_PLTRELSZ] && dyn[DT_JMPREL])
+    {
+        jmp_rel_addr = dyn[DT_JMPREL]->d_un.d_ptr;
+        jmp_rel_size = dyn[DT_PLTRELSZ]->d_un.d_val;
+    }
+    Elf64_Sym *symtab = (Elf64_Sym *)(dyn[DT_SYMTAB]->d_un.d_ptr);
+    char *strtab = (char *)(dyn[DT_STRTAB]->d_un.d_ptr);
+
+    Elf64_Rela *start = (Elf64_Rela *)jmp_rel_addr;
+    Elf64_Rela * relap = start;
+    while (relap < start + jmp_rel_size)
+    {
+        unsigned int type = (relap->r_info << 32) >> 32, idx = (relap->r_info) >> 32;
+        
+        LinkMap *map = (LinkMap *)malloc(sizeof(LinkMap));
+        map->fake =1;
+        char *symbol_name = strtab + symtab[idx].st_name;
+
+       
+        if (type == R_X86_64_JUMP_SLOT)
+        {
+            void *symbol_addr = symbolLookup(map, symbol_name);
+            *(uint64_t *)(lib->addr + relap->r_offset) = relap->r_addend + (uint64_t)symbol_addr;
+        }
+    
+        relap++;
+    }
 }

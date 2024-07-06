@@ -7,3 +7,4 @@ build
 src/orig
 legacy
 feature-test/
+.vscode

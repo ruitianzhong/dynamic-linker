@@ -87,24 +87,43 @@ void RelocLibrary(LinkMap *lib, int mode)
     }
     Elf64_Sym *symtab = (Elf64_Sym *)(dyn[DT_SYMTAB]->d_un.d_ptr);
     char *strtab = (char *)(dyn[DT_STRTAB]->d_un.d_ptr);
-
+    // handle .rela.plt
     Elf64_Rela *start = (Elf64_Rela *)jmp_rel_addr;
     Elf64_Rela * relap = start;
-    while (relap < start + jmp_rel_size)
+    for (int i = 0; i < jmp_rel_size; i += sizeof(Elf64_Rela))
     {
         unsigned int type = (relap->r_info << 32) >> 32, idx = (relap->r_info) >> 32;
-        
+
         LinkMap *map = (LinkMap *)malloc(sizeof(LinkMap));
-        map->fake =1;
+        map->fake = 1;
         char *symbol_name = strtab + symtab[idx].st_name;
 
-       
         if (type == R_X86_64_JUMP_SLOT)
         {
             void *symbol_addr = symbolLookup(map, symbol_name);
             *(uint64_t *)(lib->addr + relap->r_offset) = relap->r_addend + (uint64_t)symbol_addr;
         }
-    
+
         relap++;
+    }
+    // handle .rela.dyn for init code
+    uint64_t rela_dyn_size = 0;
+    Elf64_Rela *rela_dyn = NULL, *rela_dyn_p=NULL;
+    if (dyn[DT_RELASZ] && dyn[DT_RELA])
+    {
+        rela_dyn = (Elf64_Rela *)dyn[DT_RELA]->d_un.d_ptr;
+        rela_dyn_size = dyn[DT_RELASZ]->d_un.d_val;
+        rela_dyn_p = rela_dyn;
+    }
+    for (int i = 0; i < rela_dyn_size; i += sizeof(Elf64_Rela))
+    {
+        unsigned int type = ((rela_dyn_p->r_info) << 32) >> 32, idx = (rela_dyn_p->r_info) >> 32;
+        if (type == R_X86_64_RELATIVE)
+        {
+            uint64_t addr = lib->addr + rela_dyn_p->r_addend;
+            *(uint64_t *)(rela_dyn_p->r_offset + lib->addr) = addr;
+        }
+
+        rela_dyn_p++;
     }
 }

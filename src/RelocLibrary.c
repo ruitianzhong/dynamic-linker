@@ -8,6 +8,8 @@
 
 #include "Link.h"
 
+#define WORKLIST_SIZE 20
+
 // glibc version to hash a symbol
 static uint_fast32_t
 dl_new_hash(const char *s)
@@ -94,10 +96,8 @@ void *SearchSymbol(LinkMap *lib, char *name)
     return symbolLookup(libso, name);
 }
 
-void RelocLibrary(LinkMap *lib, int mode)
+void RelocLibraryInternal(LinkMap *lib, int mode)
 {
-    /* Your code here */
-  
     Elf64_Dyn **dyn = lib->dynInfo;
     // if(strcmp(lib->name,"./test_lib/lib1.so")!=0){
     //     return;
@@ -113,7 +113,7 @@ void RelocLibrary(LinkMap *lib, int mode)
     char *strtab = (char *)(dyn[DT_STRTAB]->d_un.d_ptr);
     // handle .rela.plt
     Elf64_Rela *start = (Elf64_Rela *)jmp_rel_addr;
-    Elf64_Rela * relap = start;
+    Elf64_Rela *relap = start;
     for (int i = 0; i < jmp_rel_size; i += sizeof(Elf64_Rela))
     {
         unsigned int type = (relap->r_info << 32) >> 32, idx = (relap->r_info) >> 32;
@@ -130,7 +130,7 @@ void RelocLibrary(LinkMap *lib, int mode)
     }
     // handle .rela.dyn for init code
     uint64_t rela_dyn_size = 0;
-    Elf64_Rela *rela_dyn = NULL, *rela_dyn_p=NULL;
+    Elf64_Rela *rela_dyn = NULL, *rela_dyn_p = NULL;
     if (dyn[DT_RELASZ] && dyn[DT_RELA])
     {
         rela_dyn = (Elf64_Rela *)dyn[DT_RELA]->d_un.d_ptr;
@@ -159,5 +159,25 @@ void RelocLibrary(LinkMap *lib, int mode)
         }
 
         rela_dyn_p++;
+    }
+}
+
+void RelocLibrary(LinkMap *lib, int mode)
+{
+    /* Your code here */
+    LinkMap *worklist[WORKLIST_SIZE];
+    int head = 0, tail = 1;
+    worklist[0] = lib;
+
+    while (head != tail)
+    {
+        LinkMap *p = worklist[0];
+        head = (head + 1) % WORKLIST_SIZE;
+        RelocLibraryInternal(p, mode);
+        for (int i = 0; i < p->deps_cnt; i++)
+        {
+            worklist[tail] = p->deps[i];
+            tail = (tail + 1) % WORKLIST_SIZE;
+        }
     }
 }

@@ -7,9 +7,10 @@
 #include <string.h>
 
 #include "Link.h"
+#include "Loader.h"
 
 #define WORKLIST_SIZE 20
-
+extern void trampoline(void);
 // glibc version to hash a symbol
 static uint_fast32_t
 dl_new_hash(const char *s)
@@ -72,6 +73,17 @@ void *symbolLookup(LinkMap *dep, const char *name)
     return NULL; //not this dependency
 }
 
+static void populate_got(LinkMap *lib)
+{
+    if (lib->dynInfo[DT_PLTGOT])
+    {
+        uint64_t *got = (uint64_t *)lib->dynInfo[DT_PLTGOT]->d_un.d_ptr;
+
+        got[1] = (uint64_t)lib;
+        got[2] = (uint64_t)trampoline;
+    }
+}
+
 void *SearchSymbol(LinkMap *lib, char *name)
 {
     lib->fake = 0;
@@ -120,10 +132,14 @@ void RelocLibraryInternal(LinkMap *lib, int mode)
 
         char *symbol_name = strtab + symtab[idx].st_name;
 
-        if (type == R_X86_64_JUMP_SLOT)
+        if (type == R_X86_64_JUMP_SLOT && BIND_NOW == mode)
         {
             void *symbol_addr = SearchSymbol(lib, symbol_name);
             *(uint64_t *)(lib->addr + relap->r_offset) = relap->r_addend + (uint64_t)symbol_addr;
+        }
+        else if (type == R_X86_64_JUMP_SLOT && LAZY_BIND == mode)
+        {
+            *(uint64_t *)(lib->addr + relap->r_offset) = *(uint64_t *)(lib->addr + relap->r_offset) + lib->addr;
         }
 
         relap++;
@@ -160,6 +176,11 @@ void RelocLibraryInternal(LinkMap *lib, int mode)
 
         rela_dyn_p++;
     }
+    if (LAZY_BIND == mode)
+    {
+        // populate global offset table for lazy binding
+        populate_got(lib);
+    }
 }
 
 void RelocLibrary(LinkMap *lib, int mode)
@@ -171,7 +192,7 @@ void RelocLibrary(LinkMap *lib, int mode)
 
     while (head != tail)
     {
-        LinkMap *p = worklist[0];
+        LinkMap *p = worklist[head];
         head = (head + 1) % WORKLIST_SIZE;
         RelocLibraryInternal(p, mode);
         for (int i = 0; i < p->deps_cnt; i++)

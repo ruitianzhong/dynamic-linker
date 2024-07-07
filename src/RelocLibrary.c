@@ -72,6 +72,13 @@ void *symbolLookup(LinkMap *dep, const char *name)
 
 void *SearchSymbol(LinkMap *lib, char *name)
 {
+    lib->fake = 0;
+    LinkMap *self = symbolLookup(lib, name);
+    if (self)
+    {
+        return self;
+    }
+
     for (int i = 0; i < lib->deps_cnt; i++)
     {
         LinkMap *dep = lib->deps[i];
@@ -137,6 +144,18 @@ void RelocLibrary(LinkMap *lib, int mode)
         {
             uint64_t addr = lib->addr + rela_dyn_p->r_addend;
             *(uint64_t *)(rela_dyn_p->r_offset + lib->addr) = addr;
+        }
+        else if (type == R_X86_64_GLOB_DAT)
+        {
+            int bind = ELF64_ST_BIND(symtab[idx].st_info);
+            if (bind != STB_WEAK)
+            {
+                char *symbol_name = strtab + symtab[idx].st_name;
+                void *symbol_addr = SearchSymbol(lib, symbol_name);
+                uint64_t addr = rela_dyn_p->r_addend + (uint64_t)symbol_addr;
+
+                *(uint64_t *)(rela_dyn_p->r_offset + lib->addr) = addr;
+            }
         }
 
         rela_dyn_p++;

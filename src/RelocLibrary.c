@@ -70,6 +70,23 @@ void *symbolLookup(LinkMap *dep, const char *name)
     return NULL; //not this dependency
 }
 
+void *SearchSymbol(LinkMap *lib, char *name)
+{
+    for (int i = 0; i < lib->deps_cnt; i++)
+    {
+        LinkMap *dep = lib->deps[i];
+        dep->fake = 0;
+        void *addr = symbolLookup(dep, name);
+        if (addr){
+            return addr;
+        }
+    }
+    LinkMap *libso = malloc(sizeof(LinkMap));
+    libso->fake = 1;
+
+    return symbolLookup(libso, name);
+}
+
 void RelocLibrary(LinkMap *lib, int mode)
 {
     /* Your code here */
@@ -94,13 +111,11 @@ void RelocLibrary(LinkMap *lib, int mode)
     {
         unsigned int type = (relap->r_info << 32) >> 32, idx = (relap->r_info) >> 32;
 
-        LinkMap *map = (LinkMap *)malloc(sizeof(LinkMap));
-        map->fake = 1;
         char *symbol_name = strtab + symtab[idx].st_name;
 
         if (type == R_X86_64_JUMP_SLOT)
         {
-            void *symbol_addr = symbolLookup(map, symbol_name);
+            void *symbol_addr = SearchSymbol(lib, symbol_name);
             *(uint64_t *)(lib->addr + relap->r_offset) = relap->r_addend + (uint64_t)symbol_addr;
         }
 

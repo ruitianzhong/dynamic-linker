@@ -9,7 +9,11 @@
 
 #include "Link.h"
 #include "LoaderInternal.h"
-
+#define PANIC     \
+    {             \
+        while (1) \
+            ;     \
+    }
 #define ALIGN_DOWN(base, size) ((base) & -((__typeof__(base))(size)))
 #define ALIGN_UP(base, size) ALIGN_DOWN((base) + (size)-1, (size))
 
@@ -82,30 +86,49 @@ static int checkElfHeader(Elf64_Ehdr *header)
     return header->e_ident[0] == ELFMAG0 && header->e_ident[1] == ELFMAG1 && header->e_ident[2] == ELFMAG2 && header->e_ident[3] == ELFMAG3;
 }
 
-void *MapLibrary(const char *libpath)
+static void FindDep(LinkMap *lib)
 {
-    /*
-     * hint:
-     * 
-     * lib = malloc(sizeof(LinkMap));
-     * 
-     * foreach segment:
-     * mmap(start_addr, segment_length, segment_prot, MAP_FILE | ..., library_fd, 
-     *      segment_offset);
-     * 
-     * lib -> addr = ...;
-     * lib -> dyn = ...;
-     * 
-     * fill_info(lib);
-     * setup_hash(lib);
-     * 
-     * return lib;
-    */
-    LinkMap *lib = (LinkMap *)malloc(sizeof(LinkMap));
-    if (lib == NULL)
+    if (!lib->dynInfo[DT_STRTAB])
+        return;
+
+    char *str_tab = (char *)lib->dynInfo[DT_STRTAB]->d_un.d_ptr;
+    Elf64_Dyn *p = lib->dyn;
+    while (p->d_tag != DT_NULL)
     {
-        return NULL;
+        if (p->d_tag == DT_NEEDED)
+        {
+            char *dep_lib_name = p->d_un.d_ptr + str_tab;
+            if (strcmp("libc.so.6", dep_lib_name) == 0)
+            {
+                p++;
+                continue;
+            }
+            LinkMap *dep = malloc(sizeof(LinkMap));
+            dep->deps_cnt = 0;
+            char *prefix = "./test_lib/";
+            int total = strlen(prefix) + strlen(dep_lib_name);
+            char *full_name = malloc(sizeof(char) * (total + 1));
+
+            strncpy(full_name, prefix, strlen(prefix));
+            strncat(full_name, dep_lib_name, strlen(dep_lib_name));
+            dep->name = full_name;
+            if (dep==NULL){
+                goto err;
+            }
+            lib->deps[lib->deps_cnt] = dep;
+            lib->deps_cnt++;
+        }
+        p++;
     }
+
+
+    err:
+        return;
+}
+
+static int MapLibraryInternal(LinkMap *lib)
+{
+    const char *libpath = lib->name;
     int fd = open(libpath, O_RDWR);
     if (fd == -1)
     {
@@ -198,15 +221,51 @@ void *MapLibrary(const char *libpath)
     }
     lib->addr = (uint64_t)start;
     lib->dyn = (Elf64_Dyn *)(dynamic_vaddr + start);
-    lib->name = libpath;
     fill_info(lib);
     setup_hash(lib);
-    return lib;
 
-    // clean up to avoid memory leak
+    return 0;
+
 cleanup_ph:
     free(phdrs);
 err:
-    free(lib);
+    return -1;
+}
+
+void *MapLibrary(const char *libpath)
+{
+    LinkMap *lib = malloc(sizeof(LinkMap));
+    lib->deps_cnt = 0;
+    if (lib == NULL)
+    {
+        return NULL;
+    }
+
+    lib->name = libpath;
+    LinkMap *worklist[20];
+    int head = 0, tail = 1;
+    worklist[0] = lib;
+
+    while (head != tail)
+    {
+        LinkMap *lm = worklist[head];
+        head = (head + 1) % 20;
+
+        MapLibraryInternal(lm);
+        FindDep(lm);
+        for (int i = 0; i < lm->deps_cnt; i++)
+        {
+            worklist[tail] = lm->deps[i];
+            if (head == (tail + 1) % 20)
+            {
+                PANIC;
+            }
+            tail = (tail + 1) % 20;
+        }
+    }
+
+    return lib;
+
+err:
     return NULL;
 }
